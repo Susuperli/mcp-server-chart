@@ -1,6 +1,7 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
-import express from "express";
+import cors from "cors";
+import express, { type Request, type Response } from "express";
 
 export const startSSEMcpServer = async (
   server: Server,
@@ -9,31 +10,51 @@ export const startSSEMcpServer = async (
 ): Promise<void> => {
   const app = express();
   app.use(express.json());
-  
+  app.use(
+    cors({
+      origin: "*",
+      exposedHeaders: ["Content-Type", "Cache-Control"],
+      credentials: true,
+    }),
+  );
+
   const transports: Record<string, SSEServerTransport> = {};
 
-  app.get(endpoint, async (req, res) => {
+  // Health check endpoint
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({ status: "healthy", timestamp: new Date().toISOString() });
+  });
+
+  // Ping test endpoint
+  app.get("/ping", (_req: Request, res: Response) => {
+    res.json({ message: "pong" });
+  });
+
+  app.get(endpoint, async (req: Request, res: Response) => {
     try {
-      const transport = new SSEServerTransport('/messages', res);
+      const transport = new SSEServerTransport("/messages", res);
       transports[transport.sessionId] = transport;
       transport.onclose = () => delete transports[transport.sessionId];
       await server.connect(transport);
     } catch (error) {
-      if (!res.headersSent) res.status(500).send('Error establishing SSE stream');
+      console.error("SSE connection error:", error);
+      if (!res.headersSent)
+        res.status(500).send("Error establishing SSE stream");
     }
   });
 
-  app.post('/messages', async (req, res) => {
+  app.post("/messages", async (req: Request, res: Response) => {
     const sessionId = req.query.sessionId as string;
-    if (!sessionId) return res.status(400).send('Missing sessionId parameter');
-    
+    if (!sessionId) return res.status(400).send("Missing sessionId parameter");
+
     const transport = transports[sessionId];
-    if (!transport) return res.status(404).send('Session not found');
-    
+    if (!transport) return res.status(404).send("Session not found");
+
     try {
       await transport.handlePostMessage(req, res, req.body);
     } catch (error) {
-      if (!res.headersSent) res.status(500).send('Error handling request');
+      console.error("Message handling error:", error);
+      if (!res.headersSent) res.status(500).send("Error handling request");
     }
   });
 

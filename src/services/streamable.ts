@@ -1,7 +1,7 @@
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import express from "express";
 import cors from "cors";
+import express, { type Request, type Response } from "express";
 
 export const startHTTPStreamableServer = async (
   createServer: () => Server,
@@ -10,46 +10,61 @@ export const startHTTPStreamableServer = async (
 ): Promise<void> => {
   const app = express();
   app.use(express.json());
-  app.use(cors({ origin: '*', exposedHeaders: ['Mcp-Session-Id'] }));
+  app.use(cors({ origin: "*", exposedHeaders: ["Mcp-Session-Id"] }));
 
-  app.post(endpoint, async (req, res) => {
+  // Health check endpoint
+  app.get("/health", (_req: Request, res: Response) => {
+    res.json({ status: "healthy", timestamp: new Date().toISOString() });
+  });
+
+  // Ping test endpoint
+  app.get("/ping", (_req: Request, res: Response) => {
+    res.json({ message: "pong" });
+  });
+
+  app.post(endpoint, async (req: Request, res: Response) => {
     try {
       const server = createServer();
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
-      res.on('close', () => {
+      res.on("close", () => {
         transport.close();
         server.close();
       });
     } catch (error) {
+      console.error("Streamable HTTP error:", error);
       if (!res.headersSent) {
         res.status(500).json({
-          jsonrpc: '2.0',
-          error: { code: -32603, message: 'Internal server error' },
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal server error" },
           id: null,
         });
       }
     }
   });
 
-  app.get(endpoint, (req, res) => {
+  app.get(endpoint, (_req: Request, res: Response) => {
     res.status(405).json({
       jsonrpc: "2.0",
       error: { code: -32000, message: "Method not allowed" },
-      id: null
+      id: null,
     });
   });
 
-  app.delete(endpoint, (req, res) => {
+  app.delete(endpoint, (_req: Request, res: Response) => {
     res.status(405).json({
       jsonrpc: "2.0",
       error: { code: -32000, message: "Method not allowed" },
-      id: null
+      id: null,
     });
   });
 
   app.listen(port, () => {
-    console.log(`Streamable HTTP Server listening on http://localhost:${port}${endpoint}`);
+    console.log(
+      `Streamable HTTP Server listening on http://localhost:${port}${endpoint}`,
+    );
   });
 };
